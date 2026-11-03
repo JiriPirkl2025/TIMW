@@ -1,0 +1,44 @@
+pkgname=glslang
+pkgver=1.4.363.0
+pkgrel=2
+pkgdesc="OpenGL and OpenGL ES shader front end and validator"
+arch=('x86_64')
+depends=('glibc' 'libstdc++' 'spirv-tools')
+makedepends=('cmake' 'ninja' 'spirv-headers' 'python' 'git')
+source=("git+https://github.com/KhronosGroup/glslang.git#tag=vulkan-sdk-${pkgver}")
+sha512sums=('SKIP')
+
+build() {
+  cd glslang
+
+  cmake \
+    -Bbuild-static \
+    -GNinja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DALLOW_EXTERNAL_SPIRV_TOOLS='ON' \
+    -DBUILD_SHARED_LIBS='OFF' \
+    -DGLSLANG_TESTS='OFF'
+  cmake --build build-static
+
+  cmake \
+    -Bbuild-shared \
+    -GNinja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DALLOW_EXTERNAL_SPIRV_TOOLS='ON' \
+    -DBUILD_SHARED_LIBS='ON' \
+    -DGLSLANG_TESTS='OFF'
+  cmake --build build-shared
+}
+
+package() {
+  cd glslang
+  DESTDIR="${pkgdir}" cmake --install build-static
+  DESTDIR="${pkgdir}" cmake --install build-shared
+
+  cd "${pkgdir}/usr/lib"
+  for lib in *.so; do
+    ln -sf "${lib}" "${lib}.0"
+  done
+}

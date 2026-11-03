@@ -1,0 +1,138 @@
+pkgbase=linux
+pkgname=('linux' 'linux-headers')
+pkgver=7.3.1.arch1
+pkgrel=2
+pkgdesc='Linux'
+arch=('x86_64')
+makedepends=('bc' 'binutils' 'cpio' 'gettext' 'glibc' 'libelf' 'libgcc' 'openssl' 'pahole' 'perl' 'python' 'rust' 'rust-bindgen' 'rust-src' 'tar' 'xxhash' 'xz' 'zlib' 'zstd')
+_srcname=linux-${pkgver%.*}
+_srctag=v${pkgver%.*}-${pkgver##*.}
+source=("https://cdn.kernel.org/pub/linux/kernel/v${pkgver%%.*}.x/${_srcname}.tar.xz" 0001-linux7.3-rc2-bore-7.0.0.patch 0001-linux7.3-rc1-ADIOS-3.3.0r2.patch optimize.patch config.x86_64)
+sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+export KBUILD_BUILD_HOST=archlinux
+export KBUILD_BUILD_USER=$pkgbase
+export KBUILD_BUILD_TIMESTAMP="$(date -Ru${SOURCE_DATE_EPOCH:+d @$SOURCE_DATE_EPOCH})"
+export CC=clang
+export LD=ld.lld
+export LLVM=1
+
+prepare() {
+  cd $_srcname
+  echo "-$pkgrel" > localversion.10-pkgrel
+  echo "${pkgbase#linux}" > localversion.20-pkgname
+
+  local src
+  for src in "${source[@]}"; do
+    src="${src%%::*}"
+    src="${src##*/}"
+    src="${src%.zst}"
+    [[ $src = *.patch ]] || continue
+    patch -Np1 < "../$src"
+  done
+
+  cp ../config.$CARCH .config
+  make olddefconfig
+  make nconfig
+  diff -u ../config.$CARCH .config || :
+  make -s kernelrelease > version
+}
+
+build() {
+  cd $_srcname
+  make all
+  make -C tools/bpf/bpftool vmlinux.h feature-clang-bpf-co-re=1
+}
+
+package_linux() {
+  pkgdesc="The $pkgdesc kernel and modules"
+  depends=('coreutils' 'initramfs' 'kmod')
+  provides=('KSMBD-MODULE' 'NTSYNC-MODULE' 'VIRTUALBOX-GUEST-MODULES' 'WIREGUARD-MODULE')
+
+  cd $_srcname
+  local modulesdir="$pkgdir/usr/lib/modules/$(<version)"
+  install -Dm644 "$(make -s image_name)" "$modulesdir/vmlinuz"
+
+  echo "$pkgbase" | install -Dm644 /dev/stdin "$modulesdir/pkgbase"
+  ZSTD_CLEVEL=19 make INSTALL_MOD_PATH="$pkgdir/usr" INSTALL_MOD_STRIP=1 \
+    DEPMOD=/doesnt/exist modules_install
+
+  rm "$modulesdir"/build
+}
+
+package_linux-headers() {
+  pkgdesc="Headers and scripts for building modules for the $pkgdesc kernel"
+  depends=('binutils' 'glibc' 'libelf' 'libgcc' 'openssl' 'pahole' 'xxhash' 'zlib' 'zstd')
+  provides=('LINUX-HEADERS')
+
+  cd $_srcname
+  local builddir="$pkgdir/usr/lib/modules/$(<version)/build"
+  local karch=x86
+ 
+  install -Dt "$builddir" -m644 .config Makefile Module.symvers System.map \
+    localversion.* version vmlinux tools/bpf/bpftool/vmlinux.h
+  install -Dt "$builddir/kernel" -m644 kernel/Makefile
+  install -Dt "$builddir/arch/$karch" -m644 arch/$karch/Makefile
+  cp -t "$builddir" -a scripts
+  ln -srt "$builddir" "$builddir/scripts/gdb/vmlinux-gdb.py"
+
+  if [[ $(scripts/config -s CONFIG_HAVE_STACK_VALIDATION) = y ]]; then
+    install -Dt "$builddir/tools/objtool" tools/objtool/objtool
+  fi
+
+  if [[ $(scripts/config -s CONFIG_DEBUG_INFO_BTF_MODULES) = y ]]; then
+    install -Dt "$builddir/tools/bpf/resolve_btfids" tools/bpf/resolve_btfids/resolve_btfids
+  fi
+
+  cp -t "$builddir" -a include
+  cp -t "$builddir/arch/$karch" -a arch/$karch/include
+  install -Dt "$builddir/arch/$karch/kernel" -m644 arch/$karch/kernel/asm-offsets.s
+
+  install -Dt "$builddir/drivers/md" -m644 drivers/md/*.h
+  install -Dt "$builddir/net/mac80211" -m644 net/mac80211/*.h
+  install -Dt "$builddir/drivers/media/i2c" -m644 drivers/media/i2c/msp3400-driver.h
+
+  install -Dt "$builddir/drivers/media/usb/dvb-usb" -m644 drivers/media/usb/dvb-usb/*.h
+  install -Dt "$builddir/drivers/media/dvb-frontends" -m644 drivers/media/dvb-frontends/*.h
+  install -Dt "$builddir/drivers/media/tuners" -m644 drivers/media/tuners/*.h
+
+  install -Dt "$builddir/drivers/iio/common/hid-sensors" -m644 drivers/iio/common/hid-sensors/*.h
+  find . -name 'Kconfig*' -exec install -Dm644 {} "$builddir/{}" \;
+
+  if [[ $(scripts/config -s CONFIG_RUST) = y ]]; then
+    echo "Installing Rust files..."
+    install -Dt "$builddir/rust" -m644 rust/*.rmeta
+    install -Dt "$builddir/rust" rust/*.so
+  fi
+
+  make INSTALL_MOD_PATH="$pkgdir/usr" vdso_install \
+    link=
+
+  local arch
+  for arch in "$builddir"/arch/*/; do
+    [[ $arch = */$karch/ ]] && continue
+    rm -r "$arch"
+  done
+
+  rm -r "$builddir/Documentation"
+  find -L "$builddir" -type l -printf 'Removing %P\n' -delete
+  find "$builddir" -type f -name '*.o' -printf 'Removing %P\n' -delete
+
+  local file
+  while read -rd '' file; do
+    case "$(file -Sib "$file")" in
+      application/x-sharedlib\;*)
+        strip -v $STRIP_SHARED "$file" ;;
+      application/x-archive\;*)
+        strip -v $STRIP_STATIC "$file" ;;
+      application/x-executable\;*)
+        strip -v $STRIP_BINARIES "$file" ;;
+      application/x-pie-executable\;*)
+        strip -v $STRIP_SHARED "$file" ;;
+    esac
+  done < <(find "$builddir" -type f -perm -u+x ! -name vmlinux -print0)
+
+  strip -v $STRIP_STATIC "$builddir/vmlinux"
+  mkdir -p "$pkgdir/usr/src"
+  ln -sr "$builddir" "$pkgdir/usr/src/$pkgbase"
+}

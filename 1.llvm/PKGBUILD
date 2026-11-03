@@ -1,0 +1,340 @@
+_kernver=7.2.10
+pkgname=('llvm' 'llvm-libs' 'clang' 'clang-libs' 'compiler-rt' 'lld')
+pkgver=23.1.4
+pkgrel=2
+arch=('x86_64')
+makedepends=('cmake' 'ninja' 'zlib' 'zstd' 'curl' 'libffi' 'libedit' 'libxml2' 'python' 'xz' 'ncurses' 'swig' 'libelf' 'python-setuptools' 'python-psutil' 'python-build' 'python-installer' 'python-wheel' 'bc' 'bison' 'flex')
+source=("https://github.com/llvm/llvm-project/releases/download/llvmorg-$pkgver/llvm-project-$pkgver.src.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v${_kernver%%.*}.x/linux-$_kernver.tar.xz")
+sha512sums=('SKIP' 'SKIP')
+
+_pgo_train_targets=(
+  LLVMSupport LLVMCore LLVMAnalysis LLVMTransformUtils LLVMScalarOpts
+  LLVMInstCombine LLVMVectorize LLVMCodeGen LLVMX86CodeGen
+  clangAST clangSema clangCodeGen
+  llvm-as llvm-dis llvm-link
+)
+
+_llvm_components() {
+  local target
+  ninja -C "$srcdir/llvm-project-$pkgver.src/build" -t targets | grep -Po 'install-\K.*(?=-stripped:)' | while read -r target; do
+    case $target in
+      cmake-exports|count|dsymutil|FileCheck|llc|lli|lli-child-target|llubi|LLVM|llvm-addr2line|llvm-ar|llvm-as|llvm-bcanalyzer|llvm-bitcode-strip|llvm-cas|llvm-cat|llvm-cfi-verify|llvm-cgdata|llvm-config|llvm-cov|llvm-c-test|llvm-ctxprof-util|llvm-cvtres|llvm-cxxdump|llvm-cxxfilt|llvm-cxxmap|llvm-debuginfo-analyzer|llvm-debuginfod|llvm-debuginfod-find|llvm-diff|llvm-dis|llvm-dlltool|llvm-dwarfdump|llvm-dwarfutil|llvm-dwp|llvm-extract|llvm-extract-bundle-entry|LLVMgold|llvm-gpu-loader|llvm-gsymutil|llvm-headers|llvm-ifs|llvm-install-name-tool|llvm-ir2vec|llvm-jitlink|llvm-jitlink-executor|llvm-lib|llvm-libtool-darwin|llvm-link|llvm-lipo|llvm-lto|llvm-lto2|llvm-mc|llvm-mca|llvm-ml|llvm-ml64|llvm-modextract|llvm-mt|llvm-nm|llvm-objcopy|llvm-objdump|llvm-offload-binary|llvm-offload-wrapper|llvm-opt-report|llvm-otool|llvm-pdbutil|llvm-PerfectShuffle|llvm-profdata|llvm-profgen|llvm-ranlib|llvm-rc|llvm-readelf|llvm-readobj|llvm-readtapi|llvm-reduce|llvm-remarkutil|llvm-rtdyld|llvm-sim|llvm-size|llvm-split|llvm-stress|llvm-strings|llvm-strip|llvm-symbolizer|llvm-tblgen|llvm-test-mustache-spec|llvm-tli-checker|llvm-undname|llvm-windres|llvm-xray|LTO|not|obj2yaml|opt|opt-viewer|reduce-chunk-list|Remarks|sancov|sanstats|split-file|UnicodeNameMappingGenerator|verify-uselistorder|yaml2obj|yaml-bench)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    echo $target
+  done
+}
+
+_clang_components() {
+  local target
+  ninja -C "$srcdir/llvm-project-$pkgver.src/build" -t targets | grep -Po 'install-\K.*(?=-stripped:)' | while read -r target; do
+    case $target in
+      clang|clang-apply-replacements|clang-change-namespace|clang-check|clang-cmake-exports|clang-cpp|clangd|clang-doc|clang-extdef-mapping|clang-format|clang-headers|clang-include-cleaner|clang-include-fixer|clang-installapi|clang-linker-wrapper|clang-move|clang-nvlink-wrapper|clang-offload-bundler|clang-offload-packager|clang-query|clang-refactor|clang-reorder-fields|clang-repl|clang-resource-headers|clang-scan-deps|clang-ssaf-analyzer|clang-ssaf-format|clang-ssaf-linker|clang-sycl-linker|clang-tblgen|clang-tidy|clang-tidy-headers|libclang|libclang-headers|libclang-python-bindings)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    echo $target
+  done
+}
+
+_lld_components() {
+  local target
+  ninja -C "$srcdir/llvm-project-$pkgver.src/build" -t targets | grep -Po 'install-\K.*(?=-stripped:)' | while read -r target; do
+    case $target in
+      lld|lld-cmake-exports|lldCOFF|lldCommon|lldELF|lld-headers|lld-libraries|lldMachO|lldMinGW|lldWasm)
+        ;;
+      *)
+        continue
+        ;;
+    esac
+    echo $target
+  done
+}
+
+_get_distribution_components() {
+  { _llvm_components; _clang_components; _lld_components; } | sort -u
+}
+
+prepare() {
+  cd llvm-project-$pkgver.src
+  rm llvm/cmake/modules/Findzstd.cmake
+  sed -i 's/^  if(ARG_SHARED)$/  if(ARG_SHARED OR LLD_BUILD_SHARED)/' lld/cmake/modules/AddLLD.cmake
+}
+
+_pgo_build_profile() {
+  local _stage0="$PWD/build-stage0" _stage1="$PWD/build-stage1"
+  local _profdir="$srcdir/pgo-profiles"
+  local _common_args=(
+    -G Ninja
+    -DCMAKE_BUILD_TYPE=Release
+    -DLLVM_HOST_TRIPLE=$CHOST
+    -DLLVM_TARGETS_TO_BUILD=Native
+    -DLLVM_ENABLE_RTTI=ON
+    -DLLVM_ENABLE_BINDINGS=OFF
+    -DLLVM_INCLUDE_BENCHMARKS=OFF
+    -DLLVM_INCLUDE_DOCS=OFF
+    -DLLVM_INCLUDE_EXAMPLES=OFF
+    -DLLVM_INCLUDE_TESTS=OFF
+    -Wno-author
+  )
+
+  cmake -S llvm -B "$_stage0" "${_common_args[@]}" \
+    -DLLVM_ENABLE_PROJECTS='clang;lld' \
+    -DLLVM_ENABLE_RUNTIMES=compiler-rt \
+    -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
+    -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF \
+    -DCOMPILER_RT_BUILD_GWP_ASAN=OFF \
+    -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
+    -DCOMPILER_RT_BUILD_MEMPROF=OFF \
+    -DCOMPILER_RT_BUILD_ORC=OFF \
+    -DCOMPILER_RT_BUILD_PROFILE=ON \
+    -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
+    -DCOMPILER_RT_BUILD_XRAY=OFF
+  ninja -C "$_stage0" clang lld llvm-ar llvm-ranlib llvm-profdata runtimes
+
+  cmake -S llvm -B "$_stage1" "${_common_args[@]}" \
+    -DLLVM_ENABLE_PROJECTS='clang;lld' \
+    -DLLVM_BUILD_INSTRUMENTED=IR \
+    -DLLVM_PROFILE_DATA_DIR="$_profdir" \
+    -DCMAKE_C_COMPILER="$_stage0/bin/clang" \
+    -DCMAKE_CXX_COMPILER="$_stage0/bin/clang++" \
+    -DCMAKE_AR="$_stage0/bin/llvm-ar" \
+    -DCMAKE_RANLIB="$_stage0/bin/llvm-ranlib"
+  ninja -C "$_stage1" clang lld
+
+  export LLD_IN_TEST=1
+  rm -rf "$_profdir" build-train build-train-pch build-train-kernel
+
+  cmake -S llvm -B build-train "${_common_args[@]}" \
+    -DLLVM_ENABLE_PROJECTS=clang \
+    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
+    -DCMAKE_C_COMPILER="$_stage1/bin/clang" \
+    -DCMAKE_CXX_COMPILER="$_stage1/bin/clang++" \
+    -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS --ld-path=$_stage1/bin/ld.lld" \
+    -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS --ld-path=$_stage1/bin/ld.lld"
+  ninja -C build-train "${_pgo_train_targets[@]}"
+
+  cmake -S llvm -B build-train-pch "${_common_args[@]}" \
+    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF \
+    -DCMAKE_C_COMPILER="$_stage1/bin/clang" \
+    -DCMAKE_CXX_COMPILER="$_stage1/bin/clang++"
+  ninja -C build-train-pch LLVMSupport
+
+  local _kmake=(
+    make -C "$srcdir/linux-$_kernver" O="$PWD/build-train-kernel"
+    CC="$_stage1/bin/clang" HOSTCC="$_stage1/bin/clang" LD="$_stage1/bin/ld.lld"
+  )
+  (
+    unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
+    "${_kmake[@]}" x86_64_defconfig
+    "${_kmake[@]}" -j"$(nproc)" vmlinux
+  )
+  unset LLD_IN_TEST
+
+  "$_stage0/bin/llvm-profdata" merge --output="$srcdir/llvm.profdata" "$_profdir"/*.profraw
+  rm -rf "$_stage1" build-train build-train-pch build-train-kernel "$_profdir"
+}
+
+build() {
+  cd llvm-project-$pkgver.src
+  _pgo_build_profile
+  local cmake_args=(
+    -G Ninja
+    -DCMAKE_SKIP_INSTALL_RPATH=ON
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_INSTALL_PREFIX=/usr
+    -DLLVM_BINUTILS_INCDIR=/usr/include
+    -DLLVM_HOST_TRIPLE=$CHOST
+    -DLLVM_TARGETS_TO_BUILD="AMDGPU;X86"
+    -DLLVM_BUILD_LLVM_DYLIB=ON
+    -DLLVM_LINK_LLVM_DYLIB=ON
+    -DCLANG_LINK_CLANG_DYLIB=ON
+    -DLLVM_INSTALL_UTILS=ON
+    -DLLVM_ENABLE_BINDINGS=OFF
+    -DLLVM_ENABLE_CURL=OFF
+    -DLLVM_ENABLE_RTTI=ON
+    -DLLVM_ENABLE_FFI=ON
+    -DLLVM_USE_PERF=ON
+    -DLLVM_BUILD_TESTS=OFF
+    -DLLVM_INCLUDE_TESTS=OFF
+    -DLLVM_INSTALL_GTEST=OFF
+    -DLLVM_BUILD_DOCS=OFF
+    -DLLVM_INCLUDE_DOCS=OFF
+    -DLLVM_INCLUDE_BENCHMARKS=OFF
+    -DLLVM_INCLUDE_EXAMPLES=OFF
+    -DLLVM_ENABLE_OCAMLDOC=OFF
+    -DLLVM_ENABLE_SPHINX=OFF
+    -DLLVM_ENABLE_DOXYGEN=OFF
+    -DLLVM_ENABLE_PROJECTS='clang;clang-tools-extra;lld'
+    -DLLVM_ENABLE_RUNTIMES='compiler-rt'
+    -DLLVM_EXTERNAL_CLANG_TOOLS_EXTRA_SOURCE_DIR="$srcdir/llvm-project-$pkgver.src/clang-tools-extra"
+    -DLLVM_THIRD_PARTY_DIR="$srcdir/llvm-project-$pkgver.src/third-party"
+    -DCOMPILER_RT_INSTALL_PATH=/usr/lib/clang/${pkgver%%.*}
+    -DLLD_BUILD_SHARED=ON
+    -Wno-author
+  )
+
+  cmake_args+=(
+    -DCMAKE_C_COMPILER="$PWD/build-stage0/bin/clang"
+    -DCMAKE_CXX_COMPILER="$PWD/build-stage0/bin/clang++"
+    -DLLVM_PROFDATA_FILE="$srcdir/llvm.profdata"
+    -DLLVM_ENABLE_LTO=Thin
+    -DLLVM_ENABLE_FATLTO=ON
+    -DLLVM_USE_LINKER=lld
+    -DCMAKE_AR="$PWD/build-stage0/bin/llvm-ar"
+    -DCMAKE_RANLIB="$PWD/build-stage0/bin/llvm-ranlib"
+  )
+
+  cmake -S llvm -B build "${cmake_args[@]}"
+  local distribution_components=$(cd build && _get_distribution_components | paste -sd\;)
+  test -n "$distribution_components"
+  cmake -S llvm -B build "${cmake_args[@]}" -DLLVM_DISTRIBUTION_COMPONENTS="$distribution_components"
+  ninja -C build
+}
+
+package_llvm() {
+  pkgdesc="Compiler infrastructure"
+  depends=('llvm-libs' 'curl' 'perl' 'libstdc++' 'glibc' 'libgcc')
+  conflicts=('llvm-lit')
+  cd llvm-project-$pkgver.src
+
+  local t
+  for t in $(_llvm_components); do
+    DESTDIR="$pkgdir" ninja -C build install-$t
+  done
+
+  rm -rf "$pkgdir"/usr/include/lldb
+  rm -rf "$pkgdir"/usr/lib/clang
+  mv -f "$pkgdir"/usr/lib/lib{LLVM,LTO,Remarks}*.so* "$srcdir"
+  mv -f "$pkgdir"/usr/lib/LLVMgold.so "$srcdir"
+}
+
+package_llvm-libs() {
+  pkgdesc="LLVM runtime libraries"
+  depends=('libgcc' 'glibc' 'libstdc++' 'zlib' 'zstd' 'libffi' 'libedit' 'libxml2')
+  provides=('libLLVM.so' 'libLTO.so' 'libRemarks.so')
+
+  install -d "$pkgdir/usr/lib"
+  cp -P \
+    "$srcdir"/lib{LLVM,LTO,Remarks}*.so* \
+    "$srcdir"/LLVMgold.so \
+    "$pkgdir/usr/lib/"
+
+  install -d "$pkgdir/usr/lib/bfd-plugins"
+  ln -s ../LLVMgold.so "$pkgdir/usr/lib/bfd-plugins/LLVMgold.so"
+}
+
+_python_optimize() {
+  python -m compileall "$@"
+  python -O -m compileall "$@"
+  python -OO -m compileall "$@"
+}
+
+_compat_old_resource_dir_symlinks() {
+  local resdir="$pkgdir/usr/lib/clang/${pkgver%%.*}/lib"
+  local triple arch entry base stem ext
+  install -d "$resdir/linux"
+  for triple in x86_64-pc-linux-gnu i386-pc-linux-gnu; do
+    [ -d "$resdir/$triple" ] || continue
+    arch=${triple%%-*}
+    for entry in "$resdir/$triple"/*; do
+      [ -f "$entry" ] || continue
+      base=$(basename "$entry")
+      if [[ $base == *.syms ]]; then
+        inner=${base%.syms}
+        ext="${inner##*.}.syms"
+        stem=${inner%.*}
+      else
+        ext="${base##*.}"
+        stem="${base%.*}"
+      fi
+      ln -s "../$triple/$base" "$resdir/linux/${stem}-${arch}.${ext}"
+    done
+  done
+}
+
+package_clang() {
+  pkgdesc="C language family frontend for LLVM"
+  depends=("clang-libs=$pkgver-$pkgrel" 'llvm-libs' 'llvm' 'gcc' 'compiler-rt' 'libgcc' 'libxml2')
+  provides=("clang-analyzer=$pkgver" "clang-tools-extra=$pkgver")
+  conflicts=('clang-analyzer' 'clang-tools-extra')
+  cd llvm-project-$pkgver.src
+
+  local t
+  for t in $(_clang_components); do
+    DESTDIR="$pkgdir" ninja -C build install-$t
+  done
+
+  rm -rf "$pkgdir"/usr/lib/clang/*/lib
+  rm -rf "$pkgdir"/usr/lib/clang/*/share
+  rm -f "$pkgdir"/usr/lib/libLTO.so*
+  rm -f "$pkgdir"/usr/lib/libRemarks.so*
+  rm -f "$pkgdir"/usr/lib/liblldb.so*
+  rm -f "$pkgdir"/usr/bin/llvm-offload-binary
+
+  local site_packages=$(python -c "import site; print(site.getsitepackages()[0])")
+  install -d "$pkgdir/$site_packages"
+  cp -a clang/bindings/python/clang "$pkgdir/$site_packages/"
+
+  _python_optimize "$pkgdir/usr/share" "$pkgdir/$site_packages"
+
+  rm -rf "$srcdir/clang-libs"
+  install -d "$srcdir"/clang-libs/{lib,python,resource}
+  mv "$pkgdir"/usr/lib/libclang{,-cpp}.so* "$srcdir/clang-libs/lib/"
+  mv "$pkgdir/usr/lib/clang/${pkgver%%.*}/include" "$srcdir/clang-libs/resource/"
+  mv "$pkgdir/$site_packages/clang" "$srcdir/clang-libs/python/"
+}
+
+package_clang-libs() {
+  pkgdesc="Clang runtime libraries"
+  depends=('llvm-libs')
+
+  local site_packages=$(python -c "import site; print(site.getsitepackages()[0])")
+  install -d "$pkgdir/usr/lib/clang/${pkgver%%.*}" "$pkgdir/$site_packages"
+  cp -P "$srcdir"/clang-libs/lib/* "$pkgdir/usr/lib/"
+  cp -a "$srcdir"/clang-libs/resource/include "$pkgdir/usr/lib/clang/${pkgver%%.*}/"
+  cp -a "$srcdir"/clang-libs/python/clang "$pkgdir/$site_packages/"
+}
+
+package_compiler-rt() {
+  pkgdesc="Compiler runtime libraries for clang"
+  depends=('glibc' 'libgcc' 'libstdc++')
+  cd llvm-project-$pkgver.src
+
+  DESTDIR="$pkgdir" ninja -C build install-compiler-rt
+  DESTDIR="$pkgdir" ninja -C build install-builtins
+  install -d "$pkgdir/usr/lib/clang/${pkgver%%.*}/include"
+  cp -a compiler-rt/include/{sanitizer,xray,fuzzer,profile} "$pkgdir/usr/lib/clang/${pkgver%%.*}/include/"
+  cp -a compiler-rt/include/orc_rt "$pkgdir/usr/lib/clang/${pkgver%%.*}/include/orc"
+  install -Dm755 compiler-rt/lib/hwasan/scripts/hwasan_symbolize "$pkgdir/usr/lib/clang/${pkgver%%.*}/bin/hwasan_symbolize"
+
+  install -d "$pkgdir/usr/lib/clang/${pkgver%%.*}/share"
+  cat compiler-rt/lib/dfsan/done_abilist.txt compiler-rt/lib/dfsan/libc_ubuntu1404_abilist.txt \
+    > "$pkgdir/usr/lib/clang/${pkgver%%.*}/share/dfsan_abilist.txt"
+
+  local syms triple
+  while read -r syms; do
+    triple=$(basename "$(dirname "$syms")")
+    install -Dm644 "$syms" "$pkgdir/usr/lib/clang/${pkgver%%.*}/lib/$triple/$(basename "$syms")"
+  done < <(find build -path '*lib/*-pc-linux-gnu/*' \( -name '*.a.syms' -o -name '*.so.syms' \))
+
+  _compat_old_resource_dir_symlinks
+}
+
+package_lld() {
+  pkgdesc="Linker from the LLVM project"
+  depends=('llvm-libs' 'libstdc++' 'glibc' 'zlib' 'zstd')
+  cd llvm-project-$pkgver.src
+
+  local t
+  for t in $(_lld_components); do
+    DESTDIR="$pkgdir" ninja -C build install-$t
+  done
+
+  rm -rf "$pkgdir"/usr/include/lldb
+}

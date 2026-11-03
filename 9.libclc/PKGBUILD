@@ -1,0 +1,39 @@
+pkgname=libclc
+pkgver=23.1.4
+pkgrel=2
+pkgdesc="Library requirements of the OpenCL C programming language"
+arch=('x86_64')
+provides=('libclc')
+conflicts=('libclc')
+makedepends=('spirv-llvm-translator' 'cmake' 'python' 'ninja')
+source=("https://github.com/llvm/llvm-project/releases/download/llvmorg-$pkgver/llvm-project-$pkgver.src.tar.xz")
+sha512sums=('SKIP')
+
+build() {
+  cd llvm-project-$pkgver.src  
+  cmake -S libclc -B build \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DLLVM_DEFAULT_TARGET_TRIPLE="spirv64-unknown-unknown" \
+    -Wno-author
+  cmake --build build
+}
+
+package() {
+  cd llvm-project-$pkgver.src/libclc
+  DESTDIR="$pkgdir" cmake --install ../build
+  ln -s spirv64-unknown-unknown/libclc.spv "$pkgdir/usr/share/clc/spirv64-mesa3d-.spv"
+
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/pkgconfig/libclc.pc" <<END
+prefix=/usr
+datarootdir=/usr/share
+datadir=/usr/share
+pkgdatadir=\${datadir}/clc
+libexecdir=\${pkgdatadir}
+
+Name: libclc
+Description: Library requirements of the OpenCL C programming language
+Version: $pkgver
+END
+}

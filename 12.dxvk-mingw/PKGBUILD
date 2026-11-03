@@ -1,0 +1,80 @@
+pkgname=dxvk-mingw
+pkgver=3.1.1.r163.g0cfe08982
+pkgrel=1
+pkgdesc='Vulkan-based implementation of D3D9, D3D10 and D3D11 for Linux / Wine, MingW version'
+arch=('x86_64')
+makedepends=('ninja' 'meson' 'glslang' 'git' 'mingw-w64-gcc')
+provides=('dxvk')
+conflicts=('dxvk')
+source=("git+https://github.com/doitsujin/dxvk.git" dxvk-extraopts.patch setup_dxvk.sh setup_dxvk)
+sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+pkgver() {
+  cd dxvk
+  printf "%s" "$(git describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/v//g')"
+}
+
+prepare() {
+  cd dxvk
+  git remote set-url origin https://github.com/doitsujin/dxvk.git
+  git submodule update --init --filter=tree:0 --recursive
+  patch -p1 -i "$srcdir"/dxvk-extraopts.patch
+}
+
+build() {
+  local -a split=($CFLAGS)
+  local -A flags
+  for opt in "${split[@]}"; do flags["${opt%%=*}"]="${opt##*=}"; done
+  local march="${flags["-march"]:-nocona}"
+  local mtune="${flags["-mtune"]:-core-avx2}"
+
+  COMMON_FLAGS="-march=$march -mtune=$mtune -O3 -pipe -mno-avx"
+  COMMON_LDFLAGS="-Wl,-O1,--sort-common,--as-needed -Wl,--file-alignment,4096"
+
+  unset CC CXX
+  export CFLAGS="$COMMON_FLAGS -mcmodel=small"
+  export CXXFLAGS="$COMMON_FLAGS -mcmodel=small"
+  export LDFLAGS="$COMMON_LDFLAGS"
+
+  local cross_cflags="$COMMON_FLAGS -mcmodel=small"
+  local cross_cxxflags="$COMMON_FLAGS -mcmodel=small"
+  local cross_ldflags="$COMMON_LDFLAGS"
+  sed -i build-win64.txt \
+      -e "s|@CARGS@|\'${cross_cflags// /\',\'}\'|g" \
+      -e "s|@CXXARGS@|\'${cross_cxxflags// /\',\'}\'|g" \
+      -e "s|@LDARGS@|\'${cross_ldflags// /\',\'}\'|g"
+
+  local cross_cflags="$COMMON_FLAGS -mstackrealign -mpreferred-stack-boundary=2"
+  local cross_cxxflags="$COMMON_FLAGS -mstackrealign -mpreferred-stack-boundary=2"
+  sed -i build-win32.txt \
+      -e "s|@CARGS@|\'${cross_cflags// /\',\'}\'|g" \
+      -e "s|@CXXARGS@|\'${cross_cxxflags// /\',\'}\'|g" \
+      -e "s|@LDARGS@|\'${cross_ldflags// /\',\'}\'|g"
+
+  meson setup dxvk "build/x64" \
+      --prefix "/usr/share/dxvk/x64" \
+      --cross-file dxvk/build-win64.txt \
+      --bindir "" --libdir "" \
+      --buildtype "release" \
+      -Db_ndebug=false \
+      --strip
+  ninja -C "build/x64" -v
+
+  meson setup dxvk "build/x32" \
+      --prefix "/usr/share/dxvk/x32" \
+      --cross-file dxvk/build-win32.txt \
+      --bindir "" --libdir "" \
+      --buildtype "release" \
+      -Db_ndebug=false \
+      --strip
+  ninja -C "build/x32" -v
+}
+
+package() {
+  depends=('vulkan-icd-loader' 'wine' 'bash')
+  DESTDIR="$pkgdir" ninja -C "build/x32" install
+  DESTDIR="$pkgdir" ninja -C "build/x64" install
+  install -Dm 755 -t "$pkgdir/usr/share/dxvk" setup_dxvk.sh
+  install -Dm 644 -t "$pkgdir/usr/share/dxvk" dxvk/dxvk.conf
+  install -Dm 755 -t "$pkgdir/usr/bin" setup_dxvk
+}

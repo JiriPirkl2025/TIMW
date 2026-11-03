@@ -1,0 +1,25 @@
+pkgname=spirv-headers
+pkgver=1.4.363.0
+pkgrel=2
+pkgdesc="SPIR-V header files and registry"
+arch=('x86_64')
+makedepends=('cmake' 'git' 'ninja')
+groups=('vulkan-devel')
+source=("git+https://github.com/KhronosGroup/SPIRV-Headers#tag=vulkan-sdk-$pkgver")
+sha512sums=('SKIP')
+
+build() {
+  local cmake_options=(
+    -DCMAKE_BUILD_TYPE=Release
+    -DCMAKE_INSTALL_PREFIX=/usr
+    -DCMAKE_INSTALL_SYSCONFDIR=/etc
+    -DCMAKE_SKIP_INSTALL_RPATH=ON
+  )
+
+  cmake -S SPIRV-Headers -B build -G Ninja "${cmake_options[@]}"
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}

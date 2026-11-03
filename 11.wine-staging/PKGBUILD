@@ -1,0 +1,78 @@
+_geckover=2.47.4
+_monover=11.3.0
+pkgname=('wine-staging' 'wine-gecko' 'wine-mono')
+pkgver=11.20.r119.g0738d528db5
+pkgrel=1
+pkgdesc="A compatibility layer for running Windows programs - Staging branch"
+arch=('x86_64')
+makedepends=('alsa-lib' 'ffmpeg' 'git' 'gnutls' 'gst-plugins-base-libs' 'gtk3' 'libcups' 'libgphoto2' 'libpulse' 'libva' 'libxcomposite' 'libxinerama' 'libxxf86vm' 'mesa' 'mingw-w64-gcc' 'opencl-headers' 'opencl-icd-loader' 'pcsclite' 'perl' 'samba' 'sane' 'sdl2' 'unixodbc' 'v4l-utils' 'vulkan-headers' 'vulkan-icd-loader')
+source=("git+https://gitlab.winehq.org/wine/wine.git" "git+https://gitlab.winehq.org/wine/wine-staging.git" https://dl.winehq.org/wine/wine-gecko/${_geckover}/wine-gecko-${_geckover}-x86{,_64}.tar.xz  https://dl.winehq.org/wine/wine-mono/${_monover}/wine-mono-${_monover}-x86.tar.xz 30-win32-aliases.conf wine-binfmt.conf)
+sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+prepare() {
+  mkdir -p build
+  wine-staging/staging/patchinstall.py DESTDIR="${srcdir}/wine" --all
+}
+
+pkgver() {
+    git -C wine describe --long --tags | sed 's/\([^-]*-g\)/r\1/;s/-/./g;s/^wine.//;s/^v//;s/\.rc/rc/'
+}
+
+build() {
+  local -a split=($CFLAGS)
+  local -A flags
+  for opt in "${split[@]}"; do flags["${opt%%=*}"]="${opt##*=}"; done
+  local march="${flags["-march"]:-nocona}"
+  local mtune="${flags["-mtune"]:-core-avx2}"
+
+  COMMON_FLAGS="-march=$march -mtune=$mtune -O2 -pipe"
+  COMMON_LDFLAGS="-Wl,-O1,--sort-common,--as-needed"
+
+  unset CC CXX
+  export CFLAGS="$COMMON_FLAGS -mcmodel=small"
+  export CXXFLAGS="$COMMON_FLAGS -mcmodel=small"
+  export LDFLAGS="$COMMON_LDFLAGS"
+
+  export CROSSCFLAGS="$COMMON_FLAGS"
+  export CROSSCXXFLAGS="$COMMON_FLAGS"
+  export CROSSLDFLAGS="$COMMON_LDFLAGS -Wl,--file-alignment,4096"
+
+  cd build
+  ../wine/configure \
+    --prefix=/usr \
+    --libdir=/usr/lib \
+    --disable-tests \
+    --enable-archs=x86_64,i386
+  make
+}
+
+package_wine-staging() {
+  depends=('attr' 'desktop-file-utils' 'fontconfig' 'freetype2' 'glibc' 'libgcc' 'gettext' 'libpcap' 'libunwind' 'libxcursor' 'libxkbcommon' 'libxi' 'libxrandr' 'wayland' 'ntsync-autoload')
+  provides=('wine' 'wine-staging')
+  conflicts=('wine' 'wine-staging')
+
+  make -C build \
+    prefix="$pkgdir/usr" \
+    libdir="$pkgdir/usr/lib" \
+    dlldir="$pkgdir/usr/lib/wine" \
+    install
+
+  install -d "$pkgdir"/usr/share/fontconfig/conf.{avail,default}
+  install -m644 "$srcdir/30-win32-aliases.conf" "$pkgdir/usr/share/fontconfig/conf.avail"
+  ln -s ../conf.avail/30-win32-aliases.conf "$pkgdir/usr/share/fontconfig/conf.default/30-win32-aliases.conf"
+  install -Dm 644 "$srcdir/wine-binfmt.conf" "$pkgdir/usr/lib/binfmt.d/wine.conf"
+}
+
+package_wine-gecko() {
+  pkgdesc="Wine's built-in replacement for Microsoft's Internet Explorer"
+  depends=('wine')
+  install -d -m755 "$pkgdir"/usr/share/wine/gecko/
+  cp -dr --no-preserve='ownership' wine-gecko-${_geckover}-x86{,_64} "$pkgdir"/usr/share/wine/gecko/
+}
+
+package_wine-mono() {
+  pkgdesc="Wine's built-in replacement for Microsoft's .NET Framework"
+  depends=('wine')
+  install -d -m755 "$pkgdir"/usr/share/wine/mono
+  cp -r -a --no-preserve='ownership' wine-mono-${_monover} "$pkgdir"/usr/share/wine/mono
+}

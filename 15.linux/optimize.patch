@@ -1,0 +1,30 @@
+diff -uraN linux-7.3/Makefile linux-7.3.new/Makefile 
+--- linux-7.3/Makefile  2026-10-19 01:14:58.000000000 +0200
++++ linux-7.3.new/Makefile      2026-10-29 23:24:22.186642358 +0100
+@@ -932,6 +932,9 @@
+ ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
+ KBUILD_CFLAGS += -O2
+ KBUILD_RUSTFLAGS += -Copt-level=2
++else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
++KBUILD_CFLAGS += -O3
++KBUILD_RUSTFLAGS += -Copt-level=3
+ else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
+ KBUILD_CFLAGS += -Os
+ KBUILD_RUSTFLAGS += -Copt-level=s
+
+diff -uraN linux-7.3/init/Kconfig linux-7.3.new/init/Kconfig 
+--- linux-7.3/init/Kconfig      2026-10-19 01:14:58.000000000 +0200
++++ linux-7.3.new/init/Kconfig  2026-10-29 23:23:11.452350785 +0100
+@@ -1666,6 +1666,12 @@
+          with the "-O2" compiler flag for best performance and most
+          helpful compile-time warnings.
+ 
++config CC_OPTIMIZE_FOR_PERFORMANCE_O3
++       bool "Optimize more for performance (-O3)"
++       help
++         Choosing this option will pass "-O3" to your compiler to optimize
++         the kernel yet more for performance.
++
+ config CC_OPTIMIZE_FOR_SIZE
+        bool "Optimize for size (-Os)"
+        help

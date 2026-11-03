@@ -1,0 +1,150 @@
+pkgname=('mesa' 'opencl-mesa' 'vulkan-radeon' 'vulkan-mesa-implicit-layers')
+pkgver=27.0.0_devel.232624.732f32f1714.d41d8cd
+pkgrel=1
+pkgdesc="Open-source OpenGL drivers"
+arch=('x86_64')
+makedepends=('git' 'clang' 'directx-headers' 'expat' 'glibc' 'libdisplay-info' 'libdrm' 'libelf' 'libgcc' 'libglvnd' 'libpng' 'libstdc++' 'libva' 'libx11' 'libxcb' 'libxext' 'libxml2' 'libxrandr' 'libxshmfence' 'libxxf86vm' 'llvm' 'llvm-libs' 'lm_sensors' 'rust' 'spirv-llvm-translator' 'spirv-tools' 'systemd-libs' 'vulkan-icd-loader' 'wayland' 'xcb-util-keysyms' 'zlib' 'zstd' 'cbindgen' 'clang' 'cmake' 'elfutils' 'glslang' 'libclc' 'meson' 'python-mako' 'python-packaging' 'python-ply' 'python-pycparser' 'python-yaml' 'rust-bindgen' 'wayland-protocols' 'xorgproto')
+source=("git+https://gitlab.freedesktop.org/mesa/mesa.git")
+sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+declare -A _crates=(
+  paste            1.0.14
+  proc-macro2      1.0.86
+  quote            1.0.35
+  rustc-hash       2.1.1
+  syn              2.0.87
+  unicode-ident    1.0.12
+)
+
+_gencrates() {
+  grep '^source_url' subprojects/*-rs.wrap | \
+    sed -r 's|.*crates/([^/]+)/([0-9.]+)/download|\1 \2|' | \
+    column -t -S 2 | sed 's/^/  /'
+}
+
+for _crate in "${!_crates[@]}"; do
+  _ver="${_crates[$_crate]}"
+  source+=(
+    "$_crate-$_ver.tar.gz::https://static.crates.io/crates/$_crate/$_ver/download"
+  )
+done
+
+pkgver() {
+  cd mesa
+  local _ver
+  _ver=$(<VERSION)
+  local _patchver
+  local _patchfile
+  for _patchfile in "${source[@]}"; do
+      _patchfile="${_patchfile%%::*}"
+      _patchfile="${_patchfile##*/}"
+      [[ $_patchfile = *.patch ]] || continue
+      _patchver="${_patchver}$(md5sum ${srcdir}/${_patchfile} | cut -c1-32)"
+  done
+  _patchver="$(echo -n $_patchver | md5sum | cut -c1-7)"
+  echo ${_ver/-/_}.$(git rev-list --count HEAD).$(git rev-parse --short HEAD).${_patchver}
+}
+
+prepare() {
+  cd mesa
+  local src
+  for src in "${source[@]}"; do
+    src="${src%%::*}"
+    src="${src##*/}"
+    src="${src%.zst}"
+    [[ $src = *.patch ]] || continue
+    echo "Applying patch $src..."
+    patch -Np1 < "../$src"
+  done
+}
+
+build() {
+  local meson_options=(
+    --prefix=/usr
+    --libexecdir=lib
+    --sbindir=bin
+    --buildtype=release
+    --auto-features=enabled
+    --wrap-mode=nodownload
+    -D android-libbacktrace=disabled
+    -D b_ndebug=true
+    -D b_lto=true
+    -D allow-broken-lto=true
+    -D gallium-drivers=radeonsi
+    -D gallium-mediafoundation=disabled
+    -D gallium-rusticl-enable-drivers=radeonsi
+    -D gallium-rusticl=true
+    -D gles1=disabled
+    -D html-docs=disabled
+    -D libunwind=disabled
+    -D microsoft-clc=disabled
+    -D valgrind=disabled
+    -D video-codecs=all
+    -D vulkan-drivers=amd
+    -D vulkan-layers=device-select
+    -D vulkan-loader-rpath=
+    -D vulkan-manifest-per-architecture=false
+    -D vulkan-beta=true
+    -D platforms=x11,wayland
+    -D zstd=enabled
+    -D tools=[]
+  )
+  export MESON_PACKAGE_CACHE_DIR="$srcdir"
+  meson setup mesa build "${meson_options[@]}"
+  meson compile -C build
+}
+
+_pick() {
+  local p="$1" f d; shift
+  for f; do
+    d="$srcdir/$p/${f#$pkgdir/}"
+    mkdir -p "$(dirname "$d")"
+    mv -v "$f" "$d"
+    rmdir -p --ignore-fail-on-non-empty "$(dirname "$f")"
+  done
+}
+
+package_mesa() {
+  depends=('expat' 'glibc' 'libdrm' 'libelf' 'libgcc' 'libglvnd' 'libstdc++' 'libx11' 'libxcb' 'libxext' 'libxshmfence' 'libxxf86vm' 'llvm-libs' 'lm_sensors' 'spirv-tools' 'wayland' 'zlib' 'zstd')
+  provides=("libva-mesa-driver=$pkgver-$pkgrel" "mesa-libgl=$pkgver-$pkgrel" 'libva-driver' 'opengl-driver')
+  conflicts=('libva-mesa-driver<1:24.2.7-1' 'mesa-libgl<17.0.1-2')
+  meson install -C build --destdir "$pkgdir" --no-rebuild
+
+  (
+    local libdir=usr/lib
+    cd "$pkgdir"
+
+    _pick opencl $libdir/libRusticlOpenCL*
+    _pick opencl etc/OpenCL/vendors/rusticl.icd
+
+    _pick vkradeon $libdir/libvulkan_radeon.so
+    _pick vkradeon usr/share/drirc.d/00-radv-defaults.conf
+    _pick vkradeon usr/share/vulkan/icd.d/radeon_icd.json
+
+    _pick vkdevice $libdir/libVkLayer_MESA_device_select.so
+    _pick vkdevice usr/share/vulkan/implicit_layer.d
+    ln -sr $libdir/libGLX_{mesa,indirect}.so.0
+  )
+}
+
+package_opencl-mesa() {
+  pkgdesc="Open-source OpenCL drivers"
+  depends=('clang' 'expat' 'glibc' 'libdrm' 'libelf' 'libgcc' 'libstdc++' 'llvm-libs' 'spirv-llvm-translator' 'spirv-tools' 'zlib' 'zstd' 'libclc')
+  provides=('opencl-driver')
+  conflicts=('opencl-clover-mesa' 'opencl-rusticl-mesa')
+  mv opencl/* "$pkgdir"
+}
+
+package_vulkan-radeon() {
+  pkgdesc="Open-source Vulkan driver for AMD GPUs"
+  depends=('expat' 'glibc' 'libdisplay-info' 'libdrm' 'libelf' 'libgcc' 'libstdc++' 'libx11' 'libxcb' 'libxshmfence' 'llvm-libs' 'spirv-tools' 'systemd-libs' 'vulkan-icd-loader' 'vulkan-mesa-implicit-layers' 'wayland' 'xcb-util-keysyms' 'zlib' 'zstd')
+  provides=('vulkan-driver')
+  mv vkradeon/* "$pkgdir"
+}
+
+package_vulkan-mesa-implicit-layers() {
+  pkgdesc="Mesa's implicit Vulkan layers"
+  depends=('glibc' 'libdrm' 'libxcb' 'wayland')
+  conflicts=('vulkan-mesa-device-select')
+  mv vkdevice/* "$pkgdir"
+}
