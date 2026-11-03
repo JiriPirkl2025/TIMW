@@ -19,13 +19,7 @@ pkgver() {
 }
 
 build() {
-  local -a split=($CFLAGS)
-  local -A flags
-  for opt in "${split[@]}"; do flags["${opt%%=*}"]="${opt##*=}"; done
-  local march="${flags["-march"]:-nocona}"
-  local mtune="${flags["-mtune"]:-core-avx2}"
-
-  COMMON_FLAGS="-march=$march -mtune=$mtune -O2 -pipe"
+  COMMON_FLAGS="-march=native -mtune=native -O2 -pipe"
   COMMON_LDFLAGS="-Wl,-O1,--sort-common,--as-needed"
 
   unset CC CXX
