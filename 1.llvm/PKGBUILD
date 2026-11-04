@@ -4,7 +4,7 @@ pkgver=23.1.5
 pkgrel=2
 arch=('x86_64')
 makedepends=('cmake' 'ninja' 'zlib' 'zstd' 'curl' 'libffi' 'libedit' 'libxml2' 'python' 'xz' 'ncurses' 'swig' 'libelf' 'python-setuptools' 'python-psutil' 'python-build' 'python-installer' 'python-wheel' 'bc' 'bison' 'flex')
-options=('!lto')
+options=('staticlibs' '!lto')
 source=("https://github.com/llvm/llvm-project/releases/download/llvmorg-$pkgver/llvm-project-$pkgver.src.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v${_kernver%%.*}.x/linux-$_kernver.tar.xz")
 sha512sums=('SKIP' 'SKIP')
 
