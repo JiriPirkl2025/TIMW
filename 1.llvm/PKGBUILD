@@ -1,6 +1,6 @@
-_kernver=7.2.10
+_kernver=7.3.1
 pkgname=('llvm' 'llvm-libs' 'clang' 'clang-libs' 'compiler-rt' 'lld')
-pkgver=23.1.4
+pkgver=23.1.5
 pkgrel=2
 arch=('x86_64')
 makedepends=('cmake' 'ninja' 'zlib' 'zstd' 'curl' 'libffi' 'libedit' 'libxml2' 'python' 'xz' 'ncurses' 'swig' 'libelf' 'python-setuptools' 'python-psutil' 'python-build' 'python-installer' 'python-wheel' 'bc' 'bison' 'flex')
