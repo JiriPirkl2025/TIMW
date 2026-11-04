@@ -44,6 +44,7 @@ _pick() {
 
 build() {
   unset CC CXX
+  export LDFLAGS="${LDFLAGS// -fuse-ld=lld/}"
   cd rustc-$pkgver-src
 
   local xpy_options=(
