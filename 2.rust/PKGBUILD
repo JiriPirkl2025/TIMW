@@ -24,7 +24,6 @@ prepare() {
 
   rm -rf src/llvm-project
   ln -sr "$srcdir/llvm-project-$_llvmver.src" src/llvm-project
-  local clangdir="$(clang -print-resource-dir)"
 
   cat >bootstrap.toml <<END
 profile = "dist"
@@ -75,7 +74,7 @@ compression-profile = "fast"
 
 [target.x86_64-unknown-linux-gnu]
 llvm-config = "/usr/bin/llvm-config"
-optimized-compiler-builtins = "%clangdir%/lib/x86_64-pc-linux-gnu/libclang_rt.builtins.a"
+optimized-compiler-builtins = "/usr/lib/clang/23/lib/x86_64-pc-linux-gnu/libclang_rt.builtins.a"
 END
 }
 
