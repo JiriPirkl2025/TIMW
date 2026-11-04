@@ -142,6 +142,7 @@ _pgo_build_profile() {
 
 build() {
   unset CC CXX
+  export LDFLAGS="${LDFLAGS// -fuse-ld=lld/}"
   cd llvm-project-$pkgver.src
 
   _pgo_build_profile
