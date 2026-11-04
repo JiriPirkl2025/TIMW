@@ -1,19 +1,10 @@
-_kernver=7.3.1
 pkgname=('llvm' 'llvm-libs' 'clang' 'clang-libs' 'compiler-rt' 'lld')
 pkgver=23.1.5
 pkgrel=2
 arch=('x86_64')
 makedepends=('cmake' 'ninja' 'zlib' 'zstd' 'curl' 'libffi' 'libedit' 'libxml2' 'python' 'xz' 'ncurses' 'swig' 'libelf' 'python-setuptools' 'python-psutil' 'python-build' 'python-installer' 'python-wheel' 'bc' 'bison' 'flex')
-options=('staticlibs' '!lto')
-source=("https://github.com/llvm/llvm-project/releases/download/llvmorg-$pkgver/llvm-project-$pkgver.src.tar.xz" "https://cdn.kernel.org/pub/linux/kernel/v${_kernver%%.*}.x/linux-$_kernver.tar.xz")
-sha512sums=('SKIP' 'SKIP')
-
-_pgo_train_targets=(
-  LLVMSupport LLVMCore LLVMAnalysis LLVMTransformUtils LLVMScalarOpts
-  LLVMInstCombine LLVMVectorize LLVMCodeGen LLVMX86CodeGen
-  clangAST clangSema clangCodeGen
-  llvm-as llvm-dis llvm-link
-)
+source=("https://github.com/llvm/llvm-project/releases/download/llvmorg-$pkgver/llvm-project-$pkgver.src.tar.xz")
+sha512sums=('SKIP')
 
 _llvm_components() {
   local target
@@ -67,86 +58,8 @@ prepare() {
   sed -i 's/^  if(ARG_SHARED)$/  if(ARG_SHARED OR LLD_BUILD_SHARED)/' lld/cmake/modules/AddLLD.cmake
 }
 
-_pgo_build_profile() {
-  local _stage0="$PWD/build-stage0" _stage1="$PWD/build-stage1"
-  local _profdir="$srcdir/pgo-profiles"
-  local _common_args=(
-    -G Ninja
-    -DCMAKE_BUILD_TYPE=Release
-    -DLLVM_HOST_TRIPLE=$CHOST
-    -DLLVM_TARGETS_TO_BUILD=Native
-    -DLLVM_ENABLE_RTTI=ON
-    -DLLVM_ENABLE_BINDINGS=OFF
-    -DLLVM_INCLUDE_BENCHMARKS=OFF
-    -DLLVM_INCLUDE_DOCS=OFF
-    -DLLVM_INCLUDE_EXAMPLES=OFF
-    -DLLVM_INCLUDE_TESTS=OFF
-    -Wno-author
-  )
-
-  cmake -S llvm -B "$_stage0" "${_common_args[@]}" \
-    -DLLVM_ENABLE_PROJECTS='clang;lld' \
-    -DLLVM_ENABLE_RUNTIMES=compiler-rt \
-    -DCOMPILER_RT_DEFAULT_TARGET_ONLY=ON \
-    -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF \
-    -DCOMPILER_RT_BUILD_GWP_ASAN=OFF \
-    -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
-    -DCOMPILER_RT_BUILD_MEMPROF=OFF \
-    -DCOMPILER_RT_BUILD_ORC=OFF \
-    -DCOMPILER_RT_BUILD_PROFILE=ON \
-    -DCOMPILER_RT_BUILD_SANITIZERS=OFF \
-    -DCOMPILER_RT_BUILD_XRAY=OFF
-  ninja -C "$_stage0" clang lld llvm-ar llvm-ranlib llvm-profdata runtimes
-
-  cmake -S llvm -B "$_stage1" "${_common_args[@]}" \
-    -DLLVM_ENABLE_PROJECTS='clang;lld' \
-    -DLLVM_BUILD_INSTRUMENTED=IR \
-    -DLLVM_PROFILE_DATA_DIR="$_profdir" \
-    -DCMAKE_C_COMPILER="$_stage0/bin/clang" \
-    -DCMAKE_CXX_COMPILER="$_stage0/bin/clang++" \
-    -DCMAKE_AR="$_stage0/bin/llvm-ar" \
-    -DCMAKE_RANLIB="$_stage0/bin/llvm-ranlib"
-  ninja -C "$_stage1" clang lld
-
-  export LLD_IN_TEST=1
-  rm -rf "$_profdir" build-train build-train-pch build-train-kernel
-
-  cmake -S llvm -B build-train "${_common_args[@]}" \
-    -DLLVM_ENABLE_PROJECTS=clang \
-    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON \
-    -DCMAKE_C_COMPILER="$_stage1/bin/clang" \
-    -DCMAKE_CXX_COMPILER="$_stage1/bin/clang++" \
-    -DCMAKE_EXE_LINKER_FLAGS="$LDFLAGS --ld-path=$_stage1/bin/ld.lld" \
-    -DCMAKE_SHARED_LINKER_FLAGS="$LDFLAGS --ld-path=$_stage1/bin/ld.lld"
-  ninja -C build-train "${_pgo_train_targets[@]}"
-
-  cmake -S llvm -B build-train-pch "${_common_args[@]}" \
-    -DCMAKE_DISABLE_PRECOMPILE_HEADERS=OFF \
-    -DCMAKE_C_COMPILER="$_stage1/bin/clang" \
-    -DCMAKE_CXX_COMPILER="$_stage1/bin/clang++"
-  ninja -C build-train-pch LLVMSupport
-
-  local _kmake=(
-    make -C "$srcdir/linux-$_kernver" O="$PWD/build-train-kernel"
-    CC="$_stage1/bin/clang" HOSTCC="$_stage1/bin/clang" LD="$_stage1/bin/ld.lld"
-  )
-  (
-    unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
-    "${_kmake[@]}" x86_64_defconfig
-    "${_kmake[@]}" -j"$(nproc)" vmlinux
-  )
-  unset LLD_IN_TEST
-
-  "$_stage0/bin/llvm-profdata" merge --output="$srcdir/llvm.profdata" "$_profdir"/*.profraw
-  rm -rf "$_stage1" build-train build-train-pch build-train-kernel "$_profdir"
-}
-
 build() {
-  unset CC CXX
-  export LDFLAGS="${LDFLAGS// -fuse-ld=lld/}"
   cd llvm-project-$pkgver.src
-
-  _pgo_build_profile
   local cmake_args=(
     -G Ninja
     -DCMAKE_SKIP_INSTALL_RPATH=ON
@@ -181,17 +94,6 @@ build() {
     -DCOMPILER_RT_INSTALL_PATH=/usr/lib/clang/${pkgver%%.*}
     -DLLD_BUILD_SHARED=ON
     -Wno-author
-  )
-
-  cmake_args+=(
-    -DCMAKE_C_COMPILER="$PWD/build-stage0/bin/clang"
-    -DCMAKE_CXX_COMPILER="$PWD/build-stage0/bin/clang++"
-    -DLLVM_PROFDATA_FILE="$srcdir/llvm.profdata"
-    -DLLVM_ENABLE_LTO=Thin
-    -DLLVM_ENABLE_FATLTO=ON
-    -DLLVM_USE_LINKER=lld
-    -DCMAKE_AR="$PWD/build-stage0/bin/llvm-ar"
-    -DCMAKE_RANLIB="$PWD/build-stage0/bin/llvm-ranlib"
   )
 
   cmake -S llvm -B build "${cmake_args[@]}"
