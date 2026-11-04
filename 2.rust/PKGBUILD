@@ -1,4 +1,4 @@
-_llvmver=23.1.4
+_llvmver=23.1.5
 pkgname=('rust' 'rust-src')
 pkgver=1.99.1
 pkgrel=3
