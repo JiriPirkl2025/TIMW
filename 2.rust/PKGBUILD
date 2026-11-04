@@ -6,7 +6,6 @@ pkgdesc="Systems programming language focused on safety, speed and concurrency"
 arch=('x86_64')
 depends=('bash' 'compiler-rt' 'curl' 'gcc' 'glibc' 'libgcc' 'libgit2' 'libssh2' 'libstdc++' 'lld' 'llvm-libs' 'openssl' 'sqlite' 'zlib')
 makedepends=("clang=$_llvmver" "llvm=$_llvmver" 'cmake' 'libffi' 'ninja' 'perl' 'python' 'rust')
-options=('!lto')
 source=("https://static.rust-lang.org/dist/rustc-$pkgver-src.tar.xz" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$_llvmver/llvm-project-$_llvmver.src.tar.xz" 0001-bootstrap-Change-libexec-dir.patch 0002-bootstrap-Change-bash-completion-dir.patch 0003-bootstrap-Workaround-for-system-stage0.patch 0004-compiler-Change-LLVM-targets.patch 0005-compiler-Use-ld.lld-by-default.patch 0006-compiler-Use-target-specific-GCC-linkers.patch 0007-compiler-Link-riscv64-musl-statically.patch 0008-compiler-Swap-primary-and-secondary-lib-dirs.patch bootstrap.x86_64.toml)
 sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
@@ -44,56 +43,20 @@ _pick() {
 }
 
 build() {
-  unset CC CXX
-  export LDFLAGS="${LDFLAGS// -fuse-ld=lld/}"
   cd rustc-$pkgver-src
-
-  local xpy_options=(
-    -j "$(nproc)"
-  )
-
-  local host_tuple="$CARCH-unknown-linux-gnu"
-  local profraw="$PWD/build/profiles"
-  mkdir -p "$profraw"
-
-  cp bootstrap.toml bootstrap.toml.nopgo
-  cat >bootstrap.toml bootstrap.toml.nopgo - <<END
-[pgo]
-rustc.generate = "$profraw"
-END
-
-  python ./x.py build sysroot "${xpy_options[@]}"
-  local stage2="$PWD/build/$host_tuple/stage2"
-  LLVM_PROFILE_FILE="$profraw/default_%m_%p.profraw" \
-    LD_LIBRARY_PATH="$stage2/lib" RUSTC="$stage2/bin/rustc" \
-    cargo build --manifest-path=src/tools/cargo/Cargo.toml
-
-  local profdata="$PWD/build/rustc.profdata"
-  llvm-profdata merge -o "$profdata" "$profraw"
-
-  stat -c "Profile data found (%s bytes)" "$profdata"
-  test -s "$profdata"
-  rm -r "$profraw" "$stage2"*/
-
-  cat >bootstrap.toml bootstrap.toml.nopgo - <<END
-[pgo]
-rustc.use = "$profdata"
-END
-  rm bootstrap.toml.nopgo
-
-  DESTDIR="$srcdir/dest-rust" python ./x.py install "${xpy_options[@]}"
+  DESTDIR="$srcdir/dest-rust" python ./x.py install -j "$(nproc)"
   cd ../dest-rust
 
   rm -v etc/target-spec-json-schema.json
   rm -v usr/lib/rustlib/{components,install.log,rust-installer-version,uninstall.sh}
   rm -v usr/lib/rustlib/manifest-*
 
-  ln -srvft usr/lib usr/lib/rustlib/$host_tuple/lib/*.so
+  ln -srvft usr/lib usr/lib/rustlib/x86_64-unknown-linux-gnu/lib/*.so
 
-  mkdir -pv usr/lib/rustlib/$host_tuple/bin/gcc-ld
-  ln -srvf  usr/bin/lld          usr/lib/rustlib/$host_tuple/bin/rust-lld
-  ln -srvf  usr/bin/llvm-objcopy usr/lib/rustlib/$host_tuple/bin/rust-objcopy
-  ln -srvft usr/lib/rustlib/$host_tuple/bin/gcc-ld usr/bin/{ld.lld,ld64.lld,lld-link,wasm-ld}
+  mkdir -pv usr/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld
+  ln -srvf  usr/bin/lld          usr/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld
+  ln -srvf  usr/bin/llvm-objcopy usr/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-objcopy
+  ln -srvft usr/lib/rustlib/x86_64-unknown-linux-gnu/bin/gcc-ld usr/bin/{ld.lld,ld64.lld,lld-link,wasm-ld}
   _pick dest-src  usr/lib/rustlib/src
 }
 
