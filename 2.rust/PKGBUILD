@@ -6,8 +6,8 @@ pkgdesc="Systems programming language focused on safety, speed and concurrency"
 arch=('x86_64')
 depends=('bash' 'compiler-rt' 'curl' 'gcc' 'glibc' 'libgcc' 'libgit2' 'libssh2' 'libstdc++' 'lld' 'llvm-libs' 'openssl' 'sqlite' 'zlib')
 makedepends=("clang=$_llvmver" "llvm=$_llvmver" 'cmake' 'libffi' 'ninja' 'perl' 'python' 'rust')
-source=("https://static.rust-lang.org/dist/rustc-$pkgver-src.tar.xz" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$_llvmver/llvm-project-$_llvmver.src.tar.xz" 0001-bootstrap-Change-libexec-dir.patch 0002-bootstrap-Change-bash-completion-dir.patch 0003-bootstrap-Workaround-for-system-stage0.patch 0004-compiler-Change-LLVM-targets.patch 0005-compiler-Use-ld.lld-by-default.patch 0006-compiler-Use-target-specific-GCC-linkers.patch 0007-compiler-Link-riscv64-musl-statically.patch 0008-compiler-Swap-primary-and-secondary-lib-dirs.patch bootstrap.x86_64.toml)
-sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+source=("https://static.rust-lang.org/dist/rustc-$pkgver-src.tar.xz" "https://github.com/llvm/llvm-project/releases/download/llvmorg-$_llvmver/llvm-project-$_llvmver.src.tar.xz" 0001-bootstrap-Change-libexec-dir.patch 0002-bootstrap-Change-bash-completion-dir.patch 0003-bootstrap-Workaround-for-system-stage0.patch 0004-compiler-Change-LLVM-targets.patch 0005-compiler-Use-ld.lld-by-default.patch 0006-compiler-Use-target-specific-GCC-linkers.patch 0007-compiler-Link-riscv64-musl-statically.patch 0008-compiler-Swap-primary-and-secondary-lib-dirs.patch)
+sha512sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
 
 prepare() {
   cd rustc-$pkgver-src
@@ -24,12 +24,59 @@ prepare() {
 
   rm -rf src/llvm-project
   ln -sr "$srcdir/llvm-project-$_llvmver.src" src/llvm-project
+  local clangdir="$(clang -print-resource-dir)"
 
-  local clangdir
-  clangdir="$(clang -print-resource-dir)"
-  sed -e "s|%description%|Arch Linux rust $pkgver-$pkgrel|g" \
-      -e "s|%clangdir%|$clangdir|g" \
-      "$srcdir/bootstrap.${CARCH}.toml" > bootstrap.toml
+  cat >bootstrap.toml <<END
+profile = "dist"
+change-id = 160100
+
+[llvm]
+download-ci-llvm = false
+link-shared = true
+targets = "AMDGPU;X86"
+
+[gcc]
+download-ci-gcc = false
+
+[build]
+description = "%description%"
+target = ["x86_64-unknown-linux-gnu",]
+cargo = "$HOME/.cargo/bin/cargo"
+rustc = "$HOME/.cargo/bin/rustc"
+rustfmt = "$HOME/.cargo/bin/rustfmt"
+locked-deps = true
+vendor = true
+tools = ["cargo", "clippy", "rustfmt", "src",]
+profiler = true
+sanitizers = false
+docs = false
+
+[install]
+prefix = "/usr"
+
+[rust]
+codegen-units = 1
+codegen-units-std = 1
+debuginfo-level = 0
+debuginfo-level-std = 0
+channel = "stable"
+rpath = false
+frame-pointers = true
+lld = false
+bootstrap-override-lld = "external"
+llvm-bitcode-linker = false
+deny-warnings = false
+lto = "thin"
+parallel-frontend-threads = 0
+
+[dist]
+compression-formats = ["gz"]
+compression-profile = "fast"
+
+[target.x86_64-unknown-linux-gnu]
+llvm-config = "/usr/bin/llvm-config"
+optimized-compiler-builtins = "%clangdir%/lib/x86_64-pc-linux-gnu/libclang_rt.builtins.a"
+END
 }
 
 _pick() {
@@ -43,6 +90,7 @@ _pick() {
 }
 
 build() {
+  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- --default-toolchain stable -y --no-modify-path
   cd rustc-$pkgver-src
   DESTDIR="$srcdir/dest-rust" python ./x.py install -j "$(nproc)"
   cd ../dest-rust
