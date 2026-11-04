@@ -43,6 +43,7 @@ _pick() {
 }
 
 build() {
+  unset CC CXX
   cd rustc-$pkgver-src
 
   local xpy_options=(
